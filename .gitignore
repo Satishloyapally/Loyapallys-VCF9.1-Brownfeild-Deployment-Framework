@@ -1,0 +1,28 @@
+# Terraform working directories and caches
+**/.terraform/*
+.terraformrc
+terraform.rc
+
+# Terraform state (never commit state)
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Variable files may contain secrets -- keep only the examples
+*.tfvars
+!*.tfvars.example
+
+# Terraform override files (local-only)
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Site definition (site-specific values -- copy from site.example.yaml)
+iac/config/site.yaml
+
+# NOTE: .terraform.lock.hcl IS committed (reproducible provider versions).

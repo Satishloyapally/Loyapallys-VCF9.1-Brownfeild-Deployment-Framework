@@ -1,0 +1,234 @@
+# =====================================================================
+# Loyapally's VCF 9.1 Brownfield Deployment Framework
+# Site definition -- single source of truth for all IaC stages.
+#
+# Copy this file to `site.yaml` (git-ignored) and edit for your site.
+# NEVER put passwords or secrets in this file. All credentials are
+# supplied through environment variables (see iac/README.md).
+#
+# Brownfield model: the management domain (converge) and any imported
+# vCenters (import) are produced by MANUAL gates in the VCF Installer /
+# VCF Operations UI. The stages here ADOPT those domains (read-only data
+# + optional `terraform import`) and then EXPAND the fleet with new
+# network pools, hosts, workload domains, edge clusters, and Supervisors.
+# =====================================================================
+
+# Target VCF release. This framework is pinned to VCF 9.1 only.
+version: "9.1.0.0"
+
+# ---------------------------------------------------------------------
+# Fleet endpoints (exist AFTER the manual converge gate completes)
+# ---------------------------------------------------------------------
+fleet:
+  # SDDC Manager of the management domain (used by adopt/expand stages).
+  sddc_manager:
+    host: sddc-manager.vcf.example.com
+    username: administrator@vsphere.local
+    # password -> env TF_VAR_sddc_manager_password
+  # VCF Installer appliance (used only by the converge gate / stage 10).
+  installer:
+    host: vcf-installer.vcf.example.com
+    username: admin@local
+    # password -> env TF_VAR_installer_password
+  # Set true only for lab environments with self-signed certificates.
+  allow_unverified_tls: false
+
+# ---------------------------------------------------------------------
+# Shared infrastructure services
+# ---------------------------------------------------------------------
+infra:
+  dns_domain: vcf.example.com
+  dns_servers:
+    - 10.0.0.10
+    - 10.0.0.11
+  ntp_servers:
+    - 10.0.0.10
+
+# ---------------------------------------------------------------------
+# Adoption targets (produced by the manual brownfield gates)
+#   - management_domain: the converged first VCF instance
+#   - imported_workload_domains: existing vCenters imported via VCF Ops
+# Stage 10/20 look these up by name and expose their IDs to later stages.
+# ---------------------------------------------------------------------
+adoption:
+  management_domain_name: mgmt-domain
+  imported_workload_domains:
+    - name: wld-brownfield-01
+
+# ---------------------------------------------------------------------
+# EXPANSION -- everything below is optional and only used by the
+# corresponding numbered stage. Remove or comment out what you don't need.
+# ---------------------------------------------------------------------
+
+# Stage 30: network pools consumed when commissioning hosts.
+network_pools:
+  - name: wld-pool-01
+    networks:
+      - type: VSAN
+        vlan_id: 1634
+        mtu: 9000
+        subnet: 172.16.34.0
+        mask: 255.255.255.0
+        gateway: 172.16.34.1
+        ip_pool:
+          start: 172.16.34.101
+          end: 172.16.34.200
+      - type: VMOTION
+        vlan_id: 1633
+        mtu: 9000
+        subnet: 172.16.33.0
+        mask: 255.255.255.0
+        gateway: 172.16.33.1
+        ip_pool:
+          start: 172.16.33.101
+          end: 172.16.33.200
+
+# Stage 40: ESX hosts to commission into SDDC Manager inventory.
+hosts_to_commission:
+  - fqdn: esxi-11.vcf.example.com
+    username: root
+    storage_type: VSAN
+    network_pool_name: wld-pool-01
+    # password -> env TF_VAR_host_password
+  - fqdn: esxi-12.vcf.example.com
+    username: root
+    storage_type: VSAN
+    network_pool_name: wld-pool-01
+  - fqdn: esxi-13.vcf.example.com
+    username: root
+    storage_type: VSAN
+    network_pool_name: wld-pool-01
+  - fqdn: esxi-14.vcf.example.com
+    username: root
+    storage_type: VSAN
+    network_pool_name: wld-pool-01
+
+# Stage 50: a NEW VI workload domain (greenfield-style expansion of the
+# adopted fleet). vSAN ESA is the default storage in VCF 9.1.
+new_workload_domain:
+  name: wld-vi-02
+  organization: it-platform
+  vcenter:
+    name: vc-wld-vi-02
+    fqdn: vc-wld-vi-02.vcf.example.com
+    ip_address: 10.0.4.20
+    subnet_mask: 255.255.255.0
+    gateway: 10.0.4.1
+    datacenter_name: wld-vi-02-dc
+    # root_password -> env TF_VAR_vcenter_root_password
+  nsx:
+    vip_fqdn: nsx-wld-vi-02.vcf.example.com
+    vip: 10.0.4.30
+    form_factor: medium
+    managers:
+      - name: nsx-wld-vi-02-a
+        fqdn: nsx-wld-vi-02-a.vcf.example.com
+        ip_address: 10.0.4.31
+        subnet_mask: 255.255.255.0
+        gateway: 10.0.4.1
+    # admin/audit passwords -> env TF_VAR_nsx_admin_password / TF_VAR_nsx_audit_password
+  sso:
+    domain_name: vsphere.local
+    # domain_password -> env TF_VAR_sso_domain_password
+  cluster:
+    name: wld-vi-02-cl01
+    evc_mode: ""
+    geneve_vlan_id: 1637
+    # host serial numbers/thumbprints come from the commissioned inventory
+    hosts:
+      - id: esxi-11.vcf.example.com
+      - id: esxi-12.vcf.example.com
+      - id: esxi-13.vcf.example.com
+      - id: esxi-14.vcf.example.com
+    vds:
+      - name: wld-vi-02-vds01
+        is_used_by_nsx: true
+        portgroups:
+          - name: wld-vi-02-mgmt
+            transport_type: MANAGEMENT
+          - name: wld-vi-02-vmotion
+            transport_type: VMOTION
+          - name: wld-vi-02-vsan
+            transport_type: VSAN
+    vsan:
+      datastore_name: wld-vi-02-vsan01
+      esa_enabled: true
+      failures_to_tolerate: 1
+      dedup_and_compression_enabled: false
+
+# Stage 60: NSX Edge cluster (Tier-0 with eBGP/ECMP).
+edge_cluster:
+  name: edge-cluster-01
+  domain_name: wld-vi-02
+  mtu: 9000
+  asn: 65001
+  tier0_name: t0-edge-cluster-01
+  tier1_name: t1-edge-cluster-01
+  form_factor: MEDIUM
+  profile_type: DEFAULT
+  routing_type: EBGP
+  high_availability: ACTIVE_ACTIVE
+  # admin/audit/root passwords -> env TF_VAR_edge_*_password
+  edge_nodes:
+    - name: edge-node-01
+      compute_cluster_name: wld-vi-02-cl01
+      management_ip: 10.0.4.41/24
+      management_gateway: 10.0.4.1
+      management_portgroup: wld-vi-02-mgmt
+      management_vlan_id: 1631
+      tep_gateway: 172.16.36.1
+      tep_vlan: 1636
+      tep1_ip: 172.16.36.11/24
+      tep2_ip: 172.16.36.12/24
+      inter_rack_cluster: false
+      uplinks:
+        - interface_ip: 172.16.37.2/24
+          vlan: 1637
+          bgp_peer_ip: 172.16.37.1
+          bgp_peer_asn: 65000
+          # bgp_peer_password -> env TF_VAR_bgp_peer_password
+    - name: edge-node-02
+      compute_cluster_name: wld-vi-02-cl01
+      management_ip: 10.0.4.42/24
+      management_gateway: 10.0.4.1
+      management_portgroup: wld-vi-02-mgmt
+      management_vlan_id: 1631
+      tep_gateway: 172.16.36.1
+      tep_vlan: 1636
+      tep1_ip: 172.16.36.13/24
+      tep2_ip: 172.16.36.14/24
+      inter_rack_cluster: false
+      uplinks:
+        - interface_ip: 172.16.38.2/24
+          vlan: 1638
+          bgp_peer_ip: 172.16.38.1
+          bgp_peer_asn: 65000
+
+# Stage 70: vSphere Supervisor (vSphere IaaS / Tanzu) on a workload cluster.
+supervisor:
+  cluster_id: domain-c1001
+  storage_policy: vsan-default-storage-policy
+  content_library_id: cl-0000
+  edge_cluster_id: edge-cluster-01
+  dvs_uuid: "50 00 00 00 00 00 00 00-00 00 00 00 00 00 00 00"
+  sizing_hint: SMALL
+  management_network:
+    network: network-o100
+    starting_address: 10.0.5.10
+    subnet_mask: 255.255.255.0
+    gateway: 10.0.5.1
+    address_count: 5
+  ingress_cidr:
+    address: 10.0.6.0
+    prefix: 24
+  egress_cidr:
+    address: 10.0.7.0
+    prefix: 24
+  pod_cidr:
+    address: 10.244.0.0
+    prefix: 21
+  service_cidr:
+    address: 10.96.0.0
+    prefix: 24
+  namespace:
+    name: platform-ns-01

@@ -1,0 +1,35 @@
+name: terraform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt (check)
+        working-directory: iac
+        run: terraform fmt -recursive -check
+
+      - name: Terraform validate (all stages)
+        working-directory: iac/stages
+        run: |
+          set -e
+          for s in */; do
+            echo "==> validate $s"
+            ( cd "$s" && terraform init -input=false -backend=false >/dev/null && terraform validate -no-color )
+          done
